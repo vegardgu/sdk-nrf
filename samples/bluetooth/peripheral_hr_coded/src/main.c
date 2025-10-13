@@ -13,6 +13,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/types.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/conn.h>
@@ -38,15 +39,66 @@ static void notify_work_handler(struct k_work *work);
 static K_WORK_DEFINE(start_advertising_worker, start_advertising_coded);
 static K_WORK_DELAYABLE_DEFINE(notify_work, notify_work_handler);
 
-static struct bt_le_ext_adv *adv;
+static struct bt_le_ext_adv *adv_conn;
+static struct bt_le_ext_adv *adv_large;
 
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
-					  BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
-					  BT_UUID_16_ENCODE(BT_UUID_DIS_VAL)),
-	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN)
-};
+/*
+ * Build a 1650-byte extended advertising payload using multiple
+ * Manufacturer Specific Data AD structures (type 0xFF).
+ * Each full AD structure contributes 256 bytes total to the HCI
+ * Advertising_Data_Length: 1 (Length) + 1 (Type) + 254 (Data).
+ * 1650 = 6 * 256 + 114, so we use 6 full entries (254 data bytes)
+ * and one final entry contributing 114 bytes total => 112 data bytes.
+ */
+#define ADV_TARGET_TOTAL_LEN               1650
+#define MFG_AD_TYPE                        BT_DATA_MANUFACTURER_DATA
+#define MFG_DATA_BYTES_PER_FULL_ENTRY      254
+#define FULL_ENTRY_TOTAL_BYTES             (1 /*len*/ + 1 /*type*/ + MFG_DATA_BYTES_PER_FULL_ENTRY)
+#define FULL_ENTRY_COUNT                   6
+#define LAST_ENTRY_TOTAL_BYTES             (ADV_TARGET_TOTAL_LEN - (FULL_ENTRY_COUNT * FULL_ENTRY_TOTAL_BYTES))
+#define LAST_ENTRY_DATA_LEN                (LAST_ENTRY_TOTAL_BYTES - 2 /*len+type*/)
+
+BUILD_ASSERT(FULL_ENTRY_TOTAL_BYTES == 256, "Unexpected full entry sizing");
+BUILD_ASSERT(LAST_ENTRY_DATA_LEN > 0, "Last AD entry must have positive data length");
+
+/* Company Identifier for Nordic Semiconductor ASA (0x0059) */
+#define MFG_COMPANY_ID_LSB                 0x59
+#define MFG_COMPANY_ID_MSB                 0x00
+
+/* Static buffers to persist after set_data() */
+static uint8_t adv_mfg_full[FULL_ENTRY_COUNT][MFG_DATA_BYTES_PER_FULL_ENTRY];
+static uint8_t adv_mfg_last[LAST_ENTRY_DATA_LEN];
+static struct bt_data ad_large[FULL_ENTRY_COUNT + 1];
+
+static void build_large_adv_payload(void)
+{
+	/* Initialize full-size manufacturer data entries */
+	for (int i = 0; i < FULL_ENTRY_COUNT; i++) {
+		uint8_t *buf = adv_mfg_full[i];
+		/* First two bytes: Company ID (LSB first) */
+		buf[0] = MFG_COMPANY_ID_LSB;
+		buf[1] = MFG_COMPANY_ID_MSB;
+		/* Fill remaining bytes with a simple pattern for visibility */
+		for (size_t j = 2; j < MFG_DATA_BYTES_PER_FULL_ENTRY; j++) {
+			buf[j] = (uint8_t)(i + 1);
+		}
+
+		ad_large[i].type = MFG_AD_TYPE;
+		ad_large[i].data_len = MFG_DATA_BYTES_PER_FULL_ENTRY;
+		ad_large[i].data = buf;
+	}
+
+	/* Initialize the last (partial) entry */
+	adv_mfg_last[0] = MFG_COMPANY_ID_LSB;
+	adv_mfg_last[1] = MFG_COMPANY_ID_MSB;
+	for (size_t j = 2; j < LAST_ENTRY_DATA_LEN; j++) {
+		adv_mfg_last[j] = 0xEE;
+	}
+
+	ad_large[FULL_ENTRY_COUNT].type = MFG_AD_TYPE;
+	ad_large[FULL_ENTRY_COUNT].data_len = LAST_ENTRY_DATA_LEN;
+	ad_large[FULL_ENTRY_COUNT].data = adv_mfg_last;
+}
 
 
 static const char *phy_to_str(uint8_t phy)
@@ -109,10 +161,18 @@ BT_CONN_CB_DEFINE(conn_callbacks) = {
 	.disconnected = disconnected,
 };
 
+static const struct bt_data ad_conn[] = {
+	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	BT_DATA_BYTES(BT_DATA_UUID16_ALL, BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
+					  BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
+					  BT_UUID_16_ENCODE(BT_UUID_DIS_VAL)),
+	BT_DATA(BT_DATA_NAME_COMPLETE, DEVICE_NAME, DEVICE_NAME_LEN)
+};
+
 static int create_advertising_coded(void)
 {
 	int err;
-	struct bt_le_adv_param param =
+    struct bt_le_adv_param param_conn =
 		BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_CONN |
 				     BT_LE_ADV_OPT_EXT_ADV |
 				     BT_LE_ADV_OPT_CODED |
@@ -121,17 +181,43 @@ static int create_advertising_coded(void)
 				     BT_GAP_ADV_FAST_INT_MAX_2,
 				     NULL);
 
-	err = bt_le_ext_adv_create(&param, NULL, &adv);
+	/* Non-connectable large extended advertising at slower interval */
+	struct bt_le_adv_param param_large =
+		BT_LE_ADV_PARAM_INIT(BT_LE_ADV_OPT_EXT_ADV |
+				     BT_LE_ADV_OPT_CODED |
+				     BT_LE_ADV_OPT_REQUIRE_S8_CODING,
+				     BT_GAP_ADV_SLOW_INT_MIN,
+				     BT_GAP_ADV_SLOW_INT_MAX,
+				     NULL);
+
+	err = bt_le_ext_adv_create(&param_conn, NULL, &adv_conn);
 	if (err) {
-		printk("Failed to create advertiser set (err %d)\n", err);
+		printk("Failed to create connectable advertiser (err %d)\n", err);
 		return err;
 	}
 
-	printk("Created adv: %p\n", adv);
+	printk("Created connectable adv: %p\n", adv_conn);
 
-	err = bt_le_ext_adv_set_data(adv, ad, ARRAY_SIZE(ad), NULL, 0);
+	/* Small AD set for connectable advertiser */
+	err = bt_le_ext_adv_set_data(adv_conn, ad_conn, ARRAY_SIZE(ad_conn), NULL, 0);
 	if (err) {
-		printk("Failed to set advertising data (err %d)\n", err);
+		printk("Failed to set connectable adv data (err %d)\n", err);
+		return err;
+	}
+
+	/* Create large non-connectable advertiser */
+	err = bt_le_ext_adv_create(&param_large, NULL, &adv_large);
+	if (err) {
+		printk("Failed to create large advertiser (err %d)\n", err);
+		return err;
+	}
+
+	printk("Created large adv: %p\n", adv_large);
+
+	build_large_adv_payload();
+	err = bt_le_ext_adv_set_data(adv_large, ad_large, ARRAY_SIZE(ad_large), NULL, 0);
+	if (err) {
+		printk("Failed to set large adv data (err %d)\n", err);
 		return err;
 	}
 
@@ -142,13 +228,21 @@ static void start_advertising_coded(struct k_work *work)
 {
 	int err;
 
-	err = bt_le_ext_adv_start(adv, BT_LE_EXT_ADV_START_DEFAULT);
+    err = bt_le_ext_adv_start(adv_conn, BT_LE_EXT_ADV_START_DEFAULT);
 	if (err) {
-		printk("Failed to start advertising set (err %d)\n", err);
+		printk("Failed to start connectable advertiser (err %d)\n", err);
 		return;
 	}
 
-	printk("Advertiser %p set started\n", adv);
+	printk("Connectable advertiser %p started\n", adv_conn);
+
+	err = bt_le_ext_adv_start(adv_large, BT_LE_EXT_ADV_START_DEFAULT);
+	if (err) {
+		printk("Failed to start large advertiser (err %d)\n", err);
+		return;
+	}
+
+	printk("Large advertiser %p started\n", adv_large);
 }
 
 static void bas_notify(void)
