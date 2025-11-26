@@ -380,6 +380,7 @@ static void bt_buf_rx_freed_cb(enum bt_buf_type type_mask)
 	}
 }
 
+#if !defined(CONFIG_BT_SDC_CONTROLLER_HOST_DIRECT)
 static int cmd_handle(struct net_buf *cmd)
 {
 	LOG_DBG("");
@@ -398,6 +399,7 @@ static int cmd_handle(struct net_buf *cmd)
 
 	return 0;
 }
+#endif
 
 #if defined(CONFIG_BT_CONN)
 static int acl_handle(struct net_buf *acl)
@@ -443,7 +445,7 @@ static int iso_handle(struct net_buf *acl)
 
 static int hci_driver_send(const struct device *dev, struct net_buf *buf)
 {
-	int err;
+	int err = 0;
 	uint8_t type;
 
 	LOG_DBG("");
@@ -461,7 +463,12 @@ static int hci_driver_send(const struct device *dev, struct net_buf *buf)
 		break;
 #endif          /* CONFIG_BT_CONN */
 	case BT_HCI_H4_CMD:
+#if defined(CONFIG_BT_SDC_CONTROLLER_HOST_DIRECT)
+		/* A linker error should occur if the Host tries to send a command with this interface. */
+		k_oops();
+#else
 		err = cmd_handle(buf);
+#endif
 		break;
 #if defined(CONFIG_BT_CTLR_ISO_TX_BUFFERS)
 	case BT_HCI_H4_ISO:
@@ -654,7 +661,11 @@ static int fetch_hci_msg(uint8_t *p_hci_buffer, sdc_hci_msg_type_t *msg_type)
 
 	errcode = MULTITHREADING_LOCK_ACQUIRE();
 	if (!errcode) {
+#if defined(CONFIG_BT_SDC_CONTROLLER_HOST_DIRECT)
+		errcode = sdc_hci_get(p_hci_buffer, (uint8_t *)msg_type);
+#else
 		errcode = hci_internal_msg_get(p_hci_buffer, msg_type);
+#endif
 		MULTITHREADING_LOCK_RELEASE();
 	}
 

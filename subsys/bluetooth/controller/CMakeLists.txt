@@ -8,6 +8,10 @@ zephyr_library()
 
 zephyr_library_sources(
   hci_driver.c
+)
+
+zephyr_library_sources_ifndef(
+  CONFIG_BT_SDC_CONTROLLER_HOST_DIRECT
   hci_internal.c
   hci_internal_wrappers.c
 )

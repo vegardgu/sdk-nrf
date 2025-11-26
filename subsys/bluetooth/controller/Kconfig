@@ -344,6 +344,22 @@ config BT_LL_SOFTDEVICE_MULTIROLE
 
 endchoice
 
+config BT_SDC_CONTROLLER_HOST_DIRECT
+	bool
+	depends on BT_LL_SOFTDEVICE && HAS_BT_CTLR && BT_HCI_HOST
+	depends on !BT_CTLR_ADV_PERIODIC
+	depends on !BT_CTLR_SYNC_PERIODIC
+	depends on !BT_CTLR_SDC_PAWR_ADV
+	depends on !BT_CTLR_SDC_PAWR_SYNC
+	depends on !BT_CTLR_DF_CTE_TX
+	depends on !BT_ISO
+	depends on !BT_CTLR_CHANNEL_SOUNDING
+	default y
+	help
+	  Enable when the host runs on the same core as the SoftDevice Controller
+	  so the HCI boundary remains inside the same image. The host will bypass the
+	  HCI driver for HCI commands and instead call SoftDevice Controller APIs directly.
+
 config BT_CTLR_FAL_SIZE
 	int "Configures the maximum number of addresses in the Filter Accept List"
 	range 0 255

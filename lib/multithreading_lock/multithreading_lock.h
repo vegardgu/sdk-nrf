@@ -34,6 +34,17 @@ extern "C" {
 /** Macro for releasing a lock */
 #define MULTITHREADING_LOCK_RELEASE() multithreading_lock_release()
 
+/** Macro for acquiring a lock and calling a SoftDevice HCI command. */
+#define MULTITHREADING_LOCK_SDC_HCI_CMD(sdc_hci_cmd)		\
+	({														\
+		int _sdc_lock_err = MULTITHREADING_LOCK_ACQUIRE();	\
+		if (!_sdc_lock_err) {								\
+			int _sdc_call_err = (int)(sdc_hci_cmd);			\
+			MULTITHREADING_LOCK_RELEASE();					\
+			_sdc_lock_err = _sdc_call_err;					\
+		}													\
+		_sdc_lock_err;										\
+	})
 
 /** @brief Try to take the lock with the specified blocking behavior.
  *
