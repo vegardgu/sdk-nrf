@@ -1033,7 +1033,7 @@ static int configure_memory_usage(void)
 	uint8_t iso_rx_paths = 0;
 #endif
 
-#if !defined(CONFIG_BT_LL_SOFTDEVICE_PERIPHERAL)
+#if !defined(CONFIG_BT_LL_SOFTDEVICE_PERIPHERAL) && !defined(CONFIG_BT_LL_SOFTDEVICE_PERIPHERAL_HID)
 	cfg.central_count.count = SDC_CENTRAL_COUNT;
 
 	/* NOTE: sdc_cfg_set() returns a negative errno on error. */

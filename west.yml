@@ -35,6 +35,8 @@ manifest:
       url-base: https://github.com/boschsensortec
     - name: eembc
       url-base: https://github.com/eembc
+    - name: vegardgu
+      url-base: https://github.com/vegardgu
 
   # If not otherwise specified, the projects below should be obtained
   # from the ncs remote.
@@ -149,8 +151,9 @@ manifest:
       revision: e8db62ed0fba5028e7ae0eba7b1fb63436ae6416
     - name: nrfxlib
       repo-path: sdk-nrfxlib
+      remote: vegardgu
       path: nrfxlib
-      revision: b825ef01e22744f5733ca6b27f5460cbbb19859c
+      revision: e80d6cdb419f7c2504d032586cb95926be33ea26
     - name: trusted-firmware-m
       repo-path: sdk-trusted-firmware-m
       path: modules/tee/tf-m/trusted-firmware-m

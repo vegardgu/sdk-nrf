@@ -324,6 +324,10 @@ config BT_CTLR_ADV_EXT_PDU_EXTRA_DATA_MEMORY
 
 choice BT_LL_SOFTDEVICE_VARIANT
 	prompt "SoftDevice Controller variant"
+	default BT_LL_SOFTDEVICE_PERIPHERAL_HID if (BT_CTLR_SUBRATING || \
+						    BT_CTLR_EXTENDED_FEAT_SET || \
+						    BT_CTLR_FRAME_SPACE_UPDATE || \
+						    BT_CTLR_SHORTER_CONNECTION_INTERVALS)
 	default BT_LL_SOFTDEVICE_MULTIROLE if ((BT_OBSERVER && BT_BROADCASTER) || \
 						     BT_CTLR_SDC_LLPM || \
 						     BT_CTLR_ADV_EXT || \
@@ -355,6 +359,24 @@ config BT_LL_SOFTDEVICE_PERIPHERAL
 	help
 	  The peripheral library variant is optimized for simpler applications only
 	  requiring the peripheral role.
+
+config BT_LL_SOFTDEVICE_PERIPHERAL_HID
+	bool "SoftDevice Controller peripheral library optimized for HID applications [EXPERIMENTAL]"
+	depends on SOC_SERIES_NRF54L || SOC_SERIES_BSIM_NRF54LX
+	depends on !BT_OBSERVER && !BT_CTLR_SDC_LLPM && !BT_CTLR_ADV_EXT && !BT_CTLR_PHY_CODED
+	depends on !BT_CTLR_DATA_LENGTH && !BT_CTLR_LE_POWER_CONTROL && !BT_CTLR_SCA_UPDATE
+	depends on !BT_ISO && !BT_CTLR_CHANNEL_SOUNDING && !BT_CTLR_LE_FLUSHABLE_ACL_DATA
+	depends on !BT_CTLR_DF_CONN_CTE_RSP && !BT_CTLR_CHANNEL_CLASSIFICATION
+	depends on !BT_CTLR_SDC_EVENT_TRIGGER && !BT_CTLR_SDC_CONN_ANCHOR_POINT_REPORT
+	depends on !BT_CTLR_SDC_QOS_CONN_EVENT_REPORT && !BT_CTLR_SDC_QOS_CHANNEL_SURVEY
+	depends on !MPSL_FEM && !BT_CTLR_SDC_MPSL_COEX
+	select EXPERIMENTAL
+	help
+	  The peripheral HID library variant is optimized for HID applications only
+	  requiring the peripheral role. Compared to the peripheral library variant, it
+	  adds support for Connection Subrating, LL Extended Feature Set, Frame Space Update
+	  and Shorter Connection Intervals, but does not support Data Length Extensions,
+	  LE Power Control, or MPSL FEM.
 
 config BT_LL_SOFTDEVICE_CENTRAL
 	bool "SoftDevice Controller optimized for central role applications"
